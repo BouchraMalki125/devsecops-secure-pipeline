@@ -1,0 +1,66 @@
+name: DevSecOps Shift-Left Pipeline
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  # ==========================================
+  # STAGE 1: Secret Detection (Gitleaks)
+  # ==========================================
+  secret-scan:
+    name: 1. Secret Detection (Gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ==========================================
+  # STAGE 2: SAST Code Analysis (Semgrep)
+  # ==========================================
+  sast-scan:
+    name: 2. SAST Analysis (Semgrep)
+    runs-on: ubuntu-latest
+    needs: secret-scan
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Run Semgrep Security Audit
+        uses: returntocorp/semgrep-action@v1
+        with:
+          config: >-
+            p/security-audit
+            p/owasp-top-ten
+
+  # ==========================================
+  # STAGE 3: Container Vulnerability Scan (Trivy)
+  # ==========================================
+  container-scan:
+    name: 3. Container & CVE Scan (Trivy)
+    runs-on: ubuntu-latest
+    needs: sast-scan
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Build Docker Image
+        run: docker build -t secure-api:${{ github.sha }} .
+
+      - name: Run Trivy Image Vulnerability Scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'secure-api:${{ github.sha }}'
+          format: 'table'
+          exit-code: '1'
+          ignore-unfixed: true
+          severity: 'CRITICAL,HIGH'
